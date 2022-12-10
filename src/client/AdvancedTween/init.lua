@@ -1,3 +1,4 @@
+---@class quad_module_tween
 local module = {}
 
 ------------------------------------
@@ -6,6 +7,9 @@ local module = {}
 local type = typeof or type
 local clock = os.clock
 local tonumber = tonumber
+local remove = table.remove
+local insert = table.insert
+local find = table.find
 
 local script = script
 local EasingFunctions = require(script and script.EasingFunctions or "EasingFunctions")
@@ -32,10 +36,15 @@ for i,v in pairs(EasingFunctions) do
 	module.EasingFunctions[i] = v
 end
 
-module.EasingDirection = {
+module.EasingDirections = {
 	Out = "Out"; -- 반전된 방향
 	In  = "In" ; -- 기본방향
 }
+
+---@deprecated
+module.EasingDirection = module.EasingDirections
+---@deprecated
+module.EasingFunction = module.EasingFunctions
 
 ------------------------------------
 -- Lerp 함수
@@ -94,20 +103,23 @@ end
 	--Data.Time (in seconds, you can use 0.5 .. etc)
 	--Data.Easing (function)
 	--Data.Direction ("Out" , "In")
-	--Data.CallBack 콜백 함수들(태이블), 예시 : 
+	--Data.CallBack 콜백 함수들(태이블), 예시 :
 	--Data.CallBack[0.5] = function() end 다음과 같이 쓰면 인덱스가 정확히 0.5 가 되는 순간(시간이 아니라 이징 함수에 의해 나온 값이 같아지는 순간)
 	--해당 함수가 실행됨
---Properties : 트윈할 속성과 목표값 예시 : 
+--Properties : 트윈할 속성과 목표값 예시 :
 --Data.Properties.Position = UDim2.new(1,0,1,0) 처럼 하면 Position 속성의 목표를 1,0,1,0 으로 지정
-function module:RunTween(Item,Data,Properties,Ended)
+function module.RunTween(Item,Data,Properties,Ended,OnStepped,_)
+	-- remove self
+	if Item == module then Item = Data; Data = Properties; Properties = Ended; Ended = OnStepped; OnStepped = _; end
+
 	-- 시간 저장
 	local Time = Data.Time or 1
 	local EndTime = clock() + Time
-	
+
 	-- 플레이 인덱스 저장
 	local ThisPlayIndex = module.PlayIndex[Item] or {}
 	module.PlayIndex[Item] = ThisPlayIndex
-	
+
 	-- 예전의 트윈을 덮어쓰고 현재 값을 저장함
 	local NowAnimationIndex = {}
 	local LastProperties = {}
@@ -116,7 +128,7 @@ function module:RunTween(Item,Data,Properties,Ended)
 		ThisPlayIndex[Property] = ThisPlayIndex[Property] ~= nil and ThisPlayIndex[Property] + 1 or 1
 		NowAnimationIndex[Property] = ThisPlayIndex[Property]
 	end
-	
+
 	-- 이징 효과 가져오기
 	local Direction = Data.Direction or "Out"
 	local Easing do
@@ -133,6 +145,7 @@ function module:RunTween(Item,Data,Properties,Ended)
 	if CallBack then
 		for FncIndex,Fnc in pairs(CallBack) do
 			if type(Fnc) ~= "function" or (type(tonumber(FncIndex)) ~= "number" and FncIndex ~= "*") then
+				warn(("Unprocessable callback function got, Ignored.\n - key: %s value: %s"):format(tostring(Fnc),tostring(FncIndex)))
 				CallBack[FncIndex] = nil
 			end
 		end
@@ -142,29 +155,21 @@ function module:RunTween(Item,Data,Properties,Ended)
 	Step = function()
 		-- 아에 멈추게 되는 경우
 		if module.PlayIndex[Item] == nil then
-			table.remove(BindedFunctions,table.find(BindedFunctions,Step))
+			remove(BindedFunctions,find(BindedFunctions,Step))
 			return
 		end
-		
+
 		local Now = clock()
 		local Index = 1 - (EndTime - Now) / Time
+		local Alpha = Direction == "Out" and Easing(Index) or (1 - Easing(1 - Index))
 
 		-- 속성 Lerp 수행
-		if Direction == "Out" then
-			LerpProperties(
-				Item,
-				LastProperties,
-				Properties,
-				Easing(Index)
-			)
-		else
-			LerpProperties(
-				Item,
-				LastProperties,
-				Properties,
-				1 - Easing(1 - Index)
-			)
-		end
+		LerpProperties(
+			Item,
+			LastProperties,
+			Properties,
+			Alpha
+		)
 
 		-- 다른 트윈이 속성을 바꾸고 있다면(이후 트윈이) 그 속성을 건들지 않도록 없엠
 		local StopByOther = true
@@ -180,7 +185,7 @@ function module:RunTween(Item,Data,Properties,Ended)
 
 		-- 만약 다른 트윈이 지금 트윈하고 있는 속성을 모두 먹은경우 현재 트윈을 삭제함
 		if StopByOther then
-			table.remove(BindedFunctions,table.find(BindedFunctions,Step))
+			remove(BindedFunctions,find(BindedFunctions,Step))
 			return
 		end
 
@@ -198,50 +203,65 @@ function module:RunTween(Item,Data,Properties,Ended)
 				ThisPlayIndex = nil
 			end
 
-			table.remove(BindedFunctions,table.find(BindedFunctions,Step))
+			remove(BindedFunctions,find(BindedFunctions,Step))
 			Index = 1
 			if Ended then
-				Ended()
+				Ended(Item)
 			end
 		end
-		
+
 		-- 중간 중간 함수 배정된것 실행
 		if CallBack then
 			for FncIndex,Fnc in pairs(CallBack) do
 				if FncIndex == "*" then
-					Fnc(Index)
-				elseif tonumber(FncIndex) <= Index then
-					Fnc(Index)
-					CallBack[FncIndex] = nil
+					Fnc(Index,Alpha)
+				else
+					local num = tonumber(FncIndex)
+					if num then
+						if num <= Index then
+							Fnc(Alpha)
+							CallBack[FncIndex] = nil
+						end
+					else
+						local alphaNum = tonumber(FncIndex:match"~([%d.]+)")
+						if alphaNum <= Alpha then
+							Fnc(Index)
+							CallBack[FncIndex] = nil
+						end
+					end
 				end
 			end
 		end
+		if OnStepped then OnStepped(Item,Index,Alpha) end
 	end
 
 	-- 스캐줄에 등록
-	table.insert(BindedFunctions,Step)
+	insert(BindedFunctions,Step)
 end
 
 -- 여러개의 개체를 트윈시킴
-function module:RunTweens(Items,Data,Properties,Ended)
-	local First = true
+function module.RunTweens(Items,Data,Properties,Ended,OnStepped,_)
+	-- remove self
+	if Items == module then Items = Data; Data = Properties; Properties = Ended; Ended = OnStepped; OnStepped = _; end
 	for _,Item in pairs(Items) do
-		module:RunTween(Item,Data,Properties,First and Ended)
-		First = false
+		module.RunTween(Item,Data,Properties,Ended,OnStepped)
 	end
 end
 
 -- 트윈 멈추기
-function module:StopTween(Item)
+function module.StopTween(Item,_)
+	if Item == module then Item = _ end
 	module.PlayIndex[Item] = nil
 end
 
 -- 해당 개체가 트윈중인지 반환
-function module:IsTweening(Item)
+function module.IsTweening(Item,_)
+	if Item == module then Item = _ end
+
 	if module.PlayIndex[Item] == nil then
 		return false
 	end
-	
+
 	for Property,Index in pairs(module.PlayIndex[Item]) do
 		if Index ~= 0 then
 			return true
@@ -251,15 +271,17 @@ function module:IsTweening(Item)
 end
 
 -- 해당 개체의 해당 프로퍼티가 트윈중인지 반환
-function module:IsPropertyTweening(Item,PropertyName)
+function module.IsPropertyTweening(Item,PropertyName,_)
+	if Item == module then Item = _ end
+
 	if module.PlayIndex[Item] == nil then
 		return false
 	end
-	
+
 	if module.PlayIndex[Item][PropertyName] == nil then
 		return false
 	end
-	
+
 	return module.PlayIndex[Item][PropertyName] ~= 0
 end
 
@@ -269,11 +291,14 @@ end
 -- 1 프레임마다 실행되도록 해야되는 함수
 -- ./Stepped.lua 에서 연결점 편집 가능
 -- roblox 는 이미 연결되어 있음
-function module:Stepped()
-	for _,Function in pairs(BindedFunctions) do
+function module.Stepped()
+	if not BindedFunctions[1] then
+		return;
+	end
+	for _,Function in ipairs(BindedFunctions) do
 		Function()
 	end
 end
-Stepped:BindStep(module.Stepped)
+Stepped.BindStep(module.Stepped)
 
 return module
