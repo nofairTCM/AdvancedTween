@@ -7,17 +7,29 @@ local IsRoblox = version and version() or nil
 -- 이 함수는 한 프레임마다 트윈들을 가져와서 실행시켜줌, (만약 트윈 효과가 하나도 없으면 그냥 건너뜀)
 
 local module = {}
-function module:BindStep(StepFunction)
+function module.BindStep(StepFunction)
     if IsRoblox then
+        if module.Connection then
+            error("Function was binded already")
+        end
         local RunService = game:GetService("RunService")
         if RunService:IsStudio() and (not RunService:IsRunning()) and RunService:IsEdit() then
-            RunService.Heartbeat:Connect(StepFunction)
+            module.Connection = RunService.Heartbeat:Connect(StepFunction)
         else
-            RunService.Stepped:Connect(StepFunction)
+            -- RunService:BindToRenderStep("advancedTween",1,StepFunction)
+            module.Connection = RunService.RenderStepped:Connect(StepFunction)
         end
     else
         -- do something here
     end
+end
+
+function module.UnbindAll()
+    if not module.Connection then
+        error("Function was not binded yet")
+    end
+    module.Connection:Disconnect()
+    module.Connection = nil
 end
 
 return module
